@@ -1,0 +1,6 @@
+Aelix Mattermost
+Copyright 2026 handochan
+
+This project integrates with Aelix and Mattermost through their documented interfaces.
+Aelix, Mattermost, and Hermes are names of their respective projects/owners.
+No source code from those projects is bundled in this implementation.

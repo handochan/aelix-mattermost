@@ -1,0 +1,39 @@
+[mattermost]
+url = "https://mattermost.example.internal"
+token_env = "MATTERMOST_TOKEN"
+# User IDs, not @usernames. Replace this before running.
+allowed_users = ["REPLACE_WITH_YOUR_MATTERMOST_USER_ID"]
+# Empty: allowed users may invoke the bot in any channel/group it has joined.
+allowed_channels = []
+allow_all_users = false
+require_mention = true
+allow_insecure_http = false
+# ca_file = "/etc/aelix-mattermost/internal-ca.pem"
+max_post_chars = 3500
+
+[aelix]
+# Install/configure Aelix separately in the service account's environment.
+command = ["aelix"]
+# model = "internal/my-model"
+offline = true
+work_dir = "workspace"
+# Empty disables ALL tools. Review implementations and backend permissions before enabling.
+allowed_tools = []
+extensions = []
+# Example: allowed_tools = ["equipment_summary"]
+#          extensions = ["./extensions/equipment.py"]
+
+[gateway]
+state_dir = "var"
+# "user": a separate transcript per caller AND thread; "thread": shared context.
+session_scope = "user"
+max_concurrent_runs = 3
+max_sessions = 64
+max_queue_per_session = 4
+idle_timeout = 300
+run_timeout = 180
+rpc_timeout = 20
+max_tool_calls = 30
+max_input_chars = 20000
+max_output_chars = 60000
+dedup_days = 30

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aelix-mattermost"
+version = "0.1.0"
+description = "Mattermost Team Edition bot gateway and extension for Aelix"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [{name = "handochan"}]
+dependencies = ["aiohttp>=3.10,<4"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Topic :: Communications :: Chat",
+]
+
+[project.urls]
+Repository = "https://github.com/handochan/aelix-mattermost"
+
+[project.scripts]
+aelix-mattermost = "aelix_mattermost.cli:main"
+
+[project.entry-points."aelix.extensions"]
+aelix-mattermost = "aelix_mattermost.extension:setup"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aelix_mattermost = ["aelix-plugin.toml", "py.typed"]
