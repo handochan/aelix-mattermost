@@ -1,0 +1,27 @@
+[Unit]
+Description=Aelix Mattermost bot gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aelix-mattermost
+Group=aelix-mattermost
+WorkingDirectory=/opt/aelix-mattermost
+EnvironmentFile=/etc/aelix-mattermost/secrets.env
+Environment=PATH=/opt/aelix-mattermost/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/aelix-mattermost/.venv/bin/aelix-mattermost run --config /etc/aelix-mattermost/config.toml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+UMask=0077
+StateDirectory=aelix-mattermost
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/aelix-mattermost
+
+[Install]
+WantedBy=multi-user.target
