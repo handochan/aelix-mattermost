@@ -1,0 +1,28 @@
+[plugin]
+id = "aelix-mattermost"
+name = "Aelix Mattermost"
+version = "0.1.0"
+description = "A Mattermost bot gateway with isolated Aelix RPC conversations."
+authors = ["Dochan Han"]
+repository = "https://github.com/handochan/aelix-mattermost"
+license = "Apache-2.0"
+
+[plugin.api]
+level = 1
+min_level = 1
+
+[plugin.entry]
+python = "aelix_mattermost.extension:setup"
+
+[capabilities]
+shell_exec = false
+net = false
+ui_tui_trusted = false
+
+[activation]
+on_startup_finished = true
+on_command = ["mattermost"]
+
+[[contributes.commands]]
+id = "mattermost"
+description = "Show how to run the independent Mattermost gateway."
