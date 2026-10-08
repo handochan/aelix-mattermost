@@ -99,6 +99,15 @@ class MattermostFixture:
         self.upgrade_status: int | None = None
         self.lose_events = 0  # buffered for replay but never written
         self.failures: list[dict] = []
+        # 0.3.0 endpoints: threads, users, channels, files, typing and reactions.
+        self.thread_posts: dict[str, list[dict]] = {}  # root id -> other people's posts
+        self.users: dict[str, str] = {}  # user id -> username
+        self.channels: dict[str, dict] = {}  # channel id -> {"type": ..., "display_name": ...}
+        self.files: dict[str, dict] = {}  # file id -> {"name", "mime_type", "data"}
+        self.uploads: list[dict] = []
+        self.typing: list[dict] = []
+        self.reactions: list[dict] = []
+        self.hooks: list[dict] = []  # slash command follow-ups to /hooks/commands/{id}
         self._sessions: dict[str, Connection] = {}
         self._sockets: dict[web.WebSocketResponse, web.Request] = {}
         self._pending: dict[str, tuple[str, float]] = {}
@@ -114,6 +123,17 @@ class MattermostFixture:
         app.router.add_put("/api/v4/posts/{id}/patch", self.patch)
         app.router.add_delete("/api/v4/posts/{id}", self.delete)
         app.router.add_get("/api/v4/websocket", self.websocket)
+        app.router.add_get("/api/v4/posts/{id}/thread", self.thread)
+        app.router.add_post("/api/v4/users/ids", self.user_ids)
+        app.router.add_get("/api/v4/users/username/{name}", self.user_by_name)
+        app.router.add_post("/api/v4/users/{id}/typing", self.typed)
+        app.router.add_get("/api/v4/channels/{id}", self.channel)
+        app.router.add_post("/api/v4/channels/direct", self.direct)
+        app.router.add_post("/api/v4/reactions", self.react)
+        app.router.add_get("/api/v4/files/{id}/info", self.file_info)
+        app.router.add_get("/api/v4/files/{id}", self.file_data)
+        app.router.add_post("/api/v4/files", self.upload)
+        app.router.add_post("/hooks/commands/{id}", self.hook)
         self._runner = web.AppRunner(app, shutdown_timeout=1.0, access_log=None)
         await self._runner.setup()
         site = web.TCPSite(self._runner, host, port)
@@ -264,7 +284,7 @@ class MattermostFixture:
             "id": post_id, "create_at": stamp, "update_at": stamp, "edit_at": 0, "delete_at": 0,
             "user_id": self.user["id"], "channel_id": value["channel_id"], "root_id": value.get("root_id", ""),
             "message": value.get("message", ""), "type": "", "props": dict(value.get("props") or {}),
-            "pending_post_id": pending,
+            "pending_post_id": pending, "file_ids": list(value.get("file_ids") or []),
         }
         if pending:
             self._pending[pending] = (post_id, now + DEDUP_SECONDS)
@@ -311,6 +331,121 @@ class MattermostFixture:
         self.deletes.append({"id": post["id"]})
         self._record("delete", {"id": post["id"]})
         return web.json_response({"status": "OK"})
+
+    # -- 0.3.0 endpoints ---------------------------------------------------------
+
+    def add_thread_post(self, root: str, user_id: str, message: str, create_at: int, **fields) -> dict:
+        """A post by someone else in a thread (the root itself when its id is `root`)."""
+        post = {"id": fields.pop("id", new_id()), "create_at": create_at, "update_at": create_at, "edit_at": 0,
+                "delete_at": 0, "user_id": user_id, "channel_id": fields.pop("channel_id", "c1"),
+                "root_id": "" if fields.get("is_root") else root, "message": message,
+                "type": fields.pop("type", ""), "props": {}, "file_ids": fields.pop("file_ids", [])}
+        fields.pop("is_root", None)
+        self.thread_posts.setdefault(root, []).append(post)
+        return post
+
+    async def thread(self, request: web.Request) -> web.StreamResponse:
+        return await self._handle(request, self._thread)
+
+    async def _thread(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        root = request.match_info["id"]
+        posts = {x["id"]: x for x in self.thread_posts.get(root, [])}
+        posts.update({k: v for k, v in self.stored.items() if v["root_id"] == root or k == root})
+        if not posts:
+            return self.error(404, "app.post.get.app_error")
+        order = sorted(posts, key=lambda k: -posts[k]["create_at"])
+        return web.json_response({"order": order, "posts": posts})
+
+    async def user_ids(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        ids = await request.json()
+        return web.json_response([{"id": x, "username": self.users[x]} for x in ids if x in self.users])
+
+    async def user_by_name(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        name = request.match_info["name"]
+        for user_id, username in self.users.items():
+            if username == name:
+                return web.json_response({"id": user_id, "username": username})
+        return self.error(404, "app.user.missing_account.const")
+
+    async def typed(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        self.typing.append({"user": request.match_info["id"], **(await request.json())})
+        return web.json_response({"status": "OK"})
+
+    async def channel(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        channel = self.channels.get(request.match_info["id"])
+        if channel is None:
+            return self.error(404, "app.channel.get.existing.app_error")
+        return web.json_response({"id": request.match_info["id"], **channel})
+
+    async def direct(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        users = sorted(await request.json())
+        channel_id = ("dm" + "".join(users))[:26].ljust(26, "0")
+        self.channels.setdefault(channel_id, {"type": "D", "display_name": ""})
+        return web.json_response({"id": channel_id, "type": "D"}, status=201)
+
+    async def react(self, request: web.Request) -> web.StreamResponse:
+        return await self._handle(request, self._react)
+
+    async def _react(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        value = await request.json()
+        self.reactions.append(value)
+        return web.json_response(value, status=201)
+
+    async def file_info(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        item = self.files.get(request.match_info["id"])
+        if item is None:
+            return self.error(404, "app.file_info.get.app_error")
+        return web.json_response({"id": request.match_info["id"], "name": item["name"],
+                                  "mime_type": item["mime_type"], "size": len(item["data"])})
+
+    async def file_data(self, request: web.Request) -> web.StreamResponse:
+        return await self._handle(request, self._file_data)
+
+    async def _file_data(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        item = self.files.get(request.match_info["id"])
+        if item is None:
+            return self.error(404, "app.file_info.get.app_error")
+        return web.Response(body=item["data"], content_type="application/octet-stream")
+
+    async def upload(self, request: web.Request) -> web.StreamResponse:
+        return await self._handle(request, self._upload)
+
+    async def _upload(self, request: web.Request) -> web.StreamResponse:
+        if not self.authorized(request):
+            return self.error(401, "api.context.session_expired.app_error")
+        form = await request.post()
+        infos = []
+        for field_value in form.getall("files", []):
+            file_id = new_id()
+            data = field_value.file.read()
+            self.files[file_id] = {"name": field_value.filename, "mime_type": field_value.content_type,
+                                   "data": data}
+            self.uploads.append({"id": file_id, "channel_id": form.get("channel_id"), "name": field_value.filename,
+                                 "data": data})
+            infos.append({"id": file_id, "name": field_value.filename, "size": len(data)})
+        return web.json_response({"file_infos": infos, "client_ids": []}, status=201)
+
+    async def hook(self, request: web.Request) -> web.StreamResponse:
+        self.hooks.append({"id": request.match_info["id"], **(await request.json())})
+        return web.Response(text="ok")
 
     # -- WebSocket ---------------------------------------------------------------
 

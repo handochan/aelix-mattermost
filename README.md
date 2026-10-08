@@ -5,10 +5,11 @@ Talk to your own Aelix runtime in DMs, group DMs, public/private channels and th
 It uses ordinary Bot Accounts, the v4 REST API and a header-authenticated WebSocket;
 Mattermost's commercial Agents plugin is not required.
 
-**0.2.0 alpha:** the REST/WebSocket/subprocess integration is tested against local doubles
-that follow Mattermost server and Aelix RPC behaviour. Deployment against your Mattermost
-server and installed Aelix still requires `doctor` and a first-message smoke test. No real
-credentials ship here. [한국어 안내](README.ko.md).
+**0.3.0 alpha:** the REST/WebSocket/subprocess integration is tested against local doubles
+that follow Mattermost server and Aelix RPC behaviour, and the 0.3.0 features against the
+real Aelix RPC with a scripted model. Deployment against your Mattermost server and installed
+Aelix still requires `doctor` and a first-message smoke test. No real credentials ship here.
+[한국어 안내](README.ko.md).
 
 ## Features
 
@@ -19,15 +20,28 @@ credentials ship here. [한국어 안내](README.ko.md).
 - Durable Aelix session mappings, per-user/thread isolation, optional shared-thread context.
 - Session-local serial execution, global concurrency limits, bounded pending requests and a
   cap on live Aelix processes.
-- `!help`, `!cancel`, `!reset`, idle child cleanup, graceful shutdown and notices for requests
-  interrupted by a restart.
+- Commands as messages (`!status`, `!stop`, `!new`, `!model`, `!usage`, `!compact`, `!tools`,
+  `!steer`, `!queue`, `!help`, also typed as ` /status` or `@aelix /status`) and an optional real
+  `/aelix` [slash command](docs/slash-command.md).
+- Messages sent while your request runs are steered into it (or interrupt or queue, per
+  `busy_mode`); the "preparing" post shows live progress (phase, tool, elapsed time, optionally
+  the answer so far) and the typing indicator runs.
+- Thread history: posts of a thread that the conversation has not seen are quoted into the
+  prompt as untrusted context, so the bot can join a discussion midway.
+- Attachments: text files inlined, images passed to vision models, every file saved for
+  tools; files the model writes into `outbox/` are attached to its answer.
+- A built-in Mattermost system prompt (formatting, commands, tools, attachments), plus an
+  operator prompt and per-channel prompts, tool lists and mention-free channels.
+- Pairing onboarding: unknown users DM the bot for a code that an admin approves.
+- Idle child cleanup, graceful shutdown and notices for requests interrupted by a restart.
 - WebSocket heartbeat and session resume, REST retries and durable post-ID deduplication.
 - Output safety: no server-side link previews; `@channel`, `@here`, `@all` and `@username`
   in model output notify nobody (members' own notification keywords still can, see below).
 - Webhook, OAuth-app and plugin posts are ignored even when they carry an allowed user's ID.
 - Private state directories, one-writer locking, a `health.json` file with a `healthcheck`
   command, and a bot token read from a variable or file and removed from child environments.
-- Tools disabled by default; opt-in exact-name policy and a pre-execution per-message call budget.
+- Tools disabled by default; opt-in exact-name policy (global or per channel) and a
+  pre-execution per-message call budget; `aelix-mattermost tools` lists what can be allowed.
 - An installable Aelix extension manifest with a `/mattermost` help command.
 - An optional hardened single-container [Docker deployment](docs/docker.md).
 
@@ -76,13 +90,26 @@ when creating a group DM. A System Admin token is unnecessary; `doctor` and `run
 bot has a System Console role.
 
 Send `hello` in a DM or `@aelix hello` in a shared channel/group. Follow up **in the same
-thread**. Commands there are `@aelix !help`, `@aelix !cancel` and `@aelix !reset`;
-in DMs the mention is unnecessary. These are message commands, not a registered `/aelix`
-slash command. This release supports text; attachments and token-by-token streaming are deferred.
+thread**. Commands there are `@aelix !help`, `@aelix !stop`, `@aelix !new` and so on; in DMs
+the mention is unnecessary. Mattermost clients take a leading `/` for their own slash
+commands, so type `!new`, ` /new` (with a leading space) or `@aelix /new`, or register the
+optional `/aelix` command. See [conversation features](docs/features.md) for steering,
+progress, thread history, attachments, the system prompt, models and pairing.
 
 Mentions follow the server's rules: `@aelix.` and `@aelix:` count, while `@aelix-bot`,
 `email@aelix`, `@aelix님` and anything in code spans or code blocks do not. Mentions are
 removed from the prompt.
+
+## Tool extensions
+
+`aelix.extensions` loads extra Aelix extensions into every child: a `.py` file, a directory of
+them (relative to the configuration file), or the module of an extension package installed in
+Aelix's Python environment (`"my_pkg"` or `"my_pkg.tools:setup"`; install it with
+`aelix extension install <path|git URL|package> --yes`). The tools they register still need
+their names in `allowed_tools` (globally or per channel). `aelix-mattermost tools` lists the
+built-in tool names and the extension packages installed next to the gateway, and
+`doctor --check-aelix` starts Aelix with every configured tool list, so an unknown name fails
+there instead of in a conversation. In Docker, see [extensions](docs/docker.md#extensions).
 
 ## Aelix extension installation
 
@@ -90,7 +117,7 @@ Build the wheel, then install it in the Aelix environment if you want the `/matt
 
 ```bash
 python -m pip wheel . --no-deps -w dist
-aelix extension install ./dist/aelix_mattermost-0.2.0-py3-none-any.whl --yes
+aelix extension install ./dist/aelix_mattermost-0.3.0-py3-none-any.whl --yes
 aelix extension verify aelix-mattermost
 ```
 
@@ -155,8 +182,8 @@ request that only waits for a run slot keeps no child. A child that is running o
 is never stopped, so the cap can be exceeded briefly. Later requests resume the mapped file;
 a mapping whose file is missing or outside the session directory is dropped and the
 conversation starts fresh.
-`!reset` starts new model context while retaining old transcript files. Only a run's caller
-can cancel that run.
+`!new` (alias `!reset`) starts new model context while retaining old transcript files. Only a
+run's caller can stop, steer or interrupt that run.
 
 When an accepted prompt starts running, the bot posts `응답을 준비하고 있습니다…` in the thread.
 The answer then arrives as new thread posts, which notify like any reply (edits never notify),

@@ -16,7 +16,7 @@ name: aelix-mattermost
 
 services:
   aelix-mattermost:
-    image: ${AELIX_MATTERMOST_IMAGE:-aelix-mattermost:0.2.0}
+    image: ${AELIX_MATTERMOST_IMAGE:-aelix-mattermost:0.3.0}
     build:
       context: ../..
     user: "10001:10001"
@@ -36,6 +36,12 @@ services:
     env_file: provider.env
     secrets:
       - mattermost_token  # /run/secrets/mattermost_token (config: token_file)
+      # Optional /aelix slash command token (config: slash_command.token_file):
+      # - mattermost_slash_token
+    # Optional /aelix slash command endpoint (config: slash_command.listen = "0.0.0.0:8066").
+    # Publish it only where Mattermost can reach it; docs/slash-command.md.
+    # ports:
+    #   - "127.0.0.1:8066:8066"
     # Long syntax: a missing file fails fast instead of Docker creating a directory.
     volumes:
       - type: volume
@@ -70,6 +76,8 @@ services:
 secrets:
   mattermost_token:
     file: ./secrets/mattermost_token
+  # mattermost_slash_token:
+  #   file: ./secrets/mattermost_slash_token
 
 volumes:
   state:

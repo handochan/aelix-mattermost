@@ -135,5 +135,8 @@ for rollback. Before upgrading, read the upgrade notes in [CHANGELOG.md](../CHAN
 with the service stopped, back up the state directory. The first start of 0.2.0 upgrades
 `gateway.db` in place to schema version 1 (a new placeholder column), and on the upgraded
 database 0.1.0 exits with an SQLite error on the first post it accepts: restore that backup
-when rolling back to 0.1.0. A database written by a newer release is refused. Resetting
-context retains old files.
+when rolling back to 0.1.0. The first start of 0.3.0 upgrades it to schema version 2 (model
+choice, thread position and pairing tables), which 0.2.0 refuses: restore the backup to roll
+back. A database written by a newer release is refused. Resetting context retains old files.
+0.3.0 also writes attachments and outbox files into conversation work directories: include
+`work_dir` in your retention policy.

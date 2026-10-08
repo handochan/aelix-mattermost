@@ -83,7 +83,7 @@ either set `SSL_CERT_FILE` in `provider.env` to a mounted bundle that contains t
 plus your CA, or build a derived image:
 
 ```dockerfile
-FROM aelix-mattermost:0.2.0
+FROM aelix-mattermost:0.3.0
 USER 0
 COPY internal-ca.crt /usr/local/share/ca-certificates/internal-ca.crt
 RUN update-ca-certificates
@@ -94,17 +94,46 @@ MCP servers stay off unless `aelix.mcp_config` names a file you mount read-only.
 extensions under `extensions/` can import `aelix_mattermost.context`, which is installed in the
 same environment as Aelix.
 
+## Extensions
+
+The root filesystem is read-only, so nothing is installed at run time. Two ways to add tools:
+
+- **Single files.** Put `my_tool.py` (with a top-level `setup(aelix)`) into `extensions/` and
+  set `extensions = ["/etc/aelix-mattermost/extensions/my_tool.py"]`, or the directory to load
+  every `.py` in it. It may use only the packages already in the image.
+- **Packages.** Build them into the image next to Aelix with
+  `docker compose build --build-arg EXTENSION_PACKAGES="my-aelix-tools==1.2"` (wheels in
+  `wheelhouse/` are found first; with `OFFLINE=1` only they are), then set
+  `extensions = ["my_aelix_tools"]` (the module, or `"my_aelix_tools.tools:setup"`).
+  `docker compose run --rm aelix-mattermost tools --config /etc/aelix-mattermost/config.toml`
+  lists the installed extension packages and the built-in tool names.
+
+Either way, add the tool names to `allowed_tools` (globally or under `[channels."<id>"]`) and
+run `doctor --check-aelix`: Aelix refuses to start with a tool name it does not know.
+Allowed tools run as uid 10001 with the session's workspace as working directory. Files the
+model writes into `outbox/` there are attached to its answer; attachments users send are
+saved under `attachments/` (see [conversation features](features.md)).
+
+## Slash command
+
+To use `/aelix status` and friends, set `[slash_command] listen = "0.0.0.0:8066"` and
+`token_file = "/run/secrets/mattermost_slash_token"`, publish the port and add the
+`mattermost_slash_token` secret (the commented lines in `compose.yaml`, or a
+`compose.override.yaml` next to it, which Compose merges and git ignores), and register the
+command in Mattermost as described in [slash-command.md](slash-command.md). Publish the port on an
+address only Mattermost can reach (`127.0.0.1` when Mattermost runs on the same host).
+
 ## Closed networks
 
 **Build outside, move the image (recommended).**
 
 ```bash
-docker build -t aelix-mattermost:0.2.0 .                  # repository root
-docker save aelix-mattermost:0.2.0 | gzip > aelix-mattermost-0.2.0.tar.gz
-sha256sum aelix-mattermost-0.2.0.tar.gz > aelix-mattermost-0.2.0.tar.gz.sha256
+docker build -t aelix-mattermost:0.3.0 .                  # repository root
+docker save aelix-mattermost:0.3.0 | gzip > aelix-mattermost-0.3.0.tar.gz
+sha256sum aelix-mattermost-0.3.0.tar.gz > aelix-mattermost-0.3.0.tar.gz.sha256
 # inside the closed network, next to deploy/docker:
-sha256sum -c aelix-mattermost-0.2.0.tar.gz.sha256
-docker load -i aelix-mattermost-0.2.0.tar.gz
+sha256sum -c aelix-mattermost-0.3.0.tar.gz.sha256
+docker load -i aelix-mattermost-0.3.0.tar.gz
 docker compose up -d --no-build
 ```
 
@@ -125,7 +154,7 @@ Move the repository (with the wheelhouse) and the base image, then build with no
 
 ```bash
 docker load -i python-3.12-slim-bookworm.tar.gz
-docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.2.0 .
+docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.3.0 .
 ```
 
 `OFFLINE=1` adds `--no-index` to every pip call and installs `tini` from the `.deb`. The
@@ -134,7 +163,7 @@ transitive version (online builds too), first write `constraints.txt` from a tes
 pass it to the download: the build applies `wheelhouse/constraints.txt` automatically.
 
 ```bash
-docker run --rm --entrypoint pip aelix-mattermost:0.2.0 freeze --exclude aelix-mattermost \
+docker run --rm --entrypoint pip aelix-mattermost:0.3.0 freeze --exclude aelix-mattermost \
   > deploy/docker/wheelhouse/constraints.txt
 # then add: -c /wheelhouse/constraints.txt to the pip download above
 ```
@@ -144,7 +173,7 @@ needs Mattermost and the model endpoint.
 
 ## Upgrades and rollback
 
-Tag every build (`aelix-mattermost:0.2.0`, `0.2.1`, ...) and keep the previous image;
+Tag every build (`aelix-mattermost:0.3.0`, `0.3.1`, ...) and keep the previous image;
 `AELIX_MATTERMOST_IMAGE` selects the tag in `compose.yaml`. [CHANGELOG.md](../CHANGELOG.md)
 lists what each release changes, state migrations included. Rebuild with
 `--build-arg AELIX_VERSION=...` for a new Aelix, then run `doctor --check-aelix` and the smoke
@@ -156,7 +185,7 @@ every transcript, `gateway.db` and Aelix's `auth.json`, so it is written with `u
 docker compose stop
 sudo install -d -m 0700 /var/backups/aelix-mattermost
 docker run --rm --user 0:0 --entrypoint sh -v aelix-mattermost_state:/data:ro \
-  -v /var/backups/aelix-mattermost:/backup aelix-mattermost:0.2.0 \
+  -v /var/backups/aelix-mattermost:/backup aelix-mattermost:0.3.0 \
   -c 'umask 077 && tar -czf /backup/state-$(date +%Y%m%d).tgz -C /data .'
 AELIX_MATTERMOST_IMAGE=aelix-mattermost:0.2.1 docker compose up -d --no-build
 ```
@@ -167,7 +196,7 @@ previous tag. Run as root, `tar` restores the original owners and modes:
 
 ```bash
 docker run --rm --user 0:0 --entrypoint sh -v aelix-mattermost_state:/data \
-  -v /var/backups/aelix-mattermost:/backup:ro aelix-mattermost:0.2.0 \
+  -v /var/backups/aelix-mattermost:/backup:ro aelix-mattermost:0.3.0 \
   -c 'umask 077 && tar -xzf /backup/state-YYYYMMDD.tgz -C /data'
 ```
 

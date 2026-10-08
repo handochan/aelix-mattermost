@@ -33,6 +33,7 @@ class DockerGuideTests(unittest.TestCase):
 
         for path in ("deploy/docker/config.toml", "deploy/docker/provider.env", "deploy/docker/models.json",
                      "deploy/docker/secrets/mattermost_token", "deploy/docker/extensions/tools.py",
+                     "deploy/docker/compose.override.yaml",
                      "deploy/docker/state-20261008.tgz"):
             self.assertTrue(ignored(path), path)
         for path in ("deploy/docker/config.toml.example", "deploy/docker/models.json.example",

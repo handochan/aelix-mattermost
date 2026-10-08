@@ -6,6 +6,11 @@ token_env = "MATTERMOST_TOKEN"
 # token_file = "/run/secrets/mattermost_token"
 # User IDs, not @usernames. Replace this before running.
 allowed_users = ["REPLACE_WITH_YOUR_MATTERMOST_USER_ID"]
+# Admins (user IDs) may use the bot and approve pairing requests with `!pair` in a DM.
+admins = []
+# Pairing: an unknown user who DMs the bot gets a code; an admin approves it with
+# `!pair approve CODE` or `aelix-mattermost pairing approve CODE`.
+pairing = false
 # Empty: allowed users may invoke the bot in any channel/group it has joined.
 allowed_channels = []
 allow_all_users = false
@@ -18,20 +23,42 @@ max_post_chars = 3500
 # Install/configure Aelix separately in the service account's environment.
 command = ["aelix"]
 # model = "internal/my-model"
+# Models people may switch to with `!model` (empty: switching is off).
+models = []
 offline = true
 work_dir = "workspace"
 # Empty disables ALL tools. Review implementations and backend permissions before enabling.
+# Built-in names: read, ls, find, grep, write, edit, bash (see `aelix-mattermost tools`).
 allowed_tools = []
+# .py files or directories (relative to this file), or installed extension modules ("pkg:setup").
 extensions = []
 # Example: allowed_tools = ["equipment_summary"]
 #          extensions = ["./extensions/equipment.py"]
 # MCP servers start only from this file; the service account's own mcp.json is ignored.
 # mcp_config = "/etc/aelix-mattermost/mcp.json"
+# Appended after the built-in Mattermost instructions in every conversation's system prompt.
+system_prompt = ""
 
 [gateway]
 state_dir = "var"
 # "user": a separate transcript per caller AND thread; "thread": shared context.
 session_scope = "user"
+# A message from the same person while their request runs: "steer" injects it into the
+# running request, "interrupt" stops that request and answers the new one, "queue" waits.
+busy_mode = "steer"
+# The "preparing" post shows progress: "status" (phase, tool, elapsed time), "stream"
+# (also the answer so far) or "off". Edits never notify.
+progress = "status"
+progress_interval = 3
+# Thread posts a conversation has not seen are quoted into the prompt (0 disables).
+thread_history_posts = 30
+thread_history_chars = 12000
+# Attachments: at most this many files (0 ignores attachments) and bytes per file.
+max_attachments = 10
+max_attachment_bytes = 20971520
+max_inline_text_chars = 30000
+# Files the model writes into outbox/ are attached to its answer up to this size each.
+max_upload_bytes = 52428800
 max_concurrent_runs = 3
 # Aelix children kept running between requests (about 85 MiB each); when the limit is
 # reached the least recently used idle one stops. At least max_concurrent_runs.
@@ -49,3 +76,16 @@ max_output_chars = 60000
 dedup_days = 30
 # Also log a redacted tail of Aelix stderr when a request fails.
 log_aelix_stderr = false
+
+# Optional: a real Mattermost slash command (/aelix status, /aelix new, ...). Mattermost must
+# reach this address; see docs/slash-command.md.
+# [slash_command]
+# listen = "127.0.0.1:8066"
+# token_file = "/run/secrets/mattermost_slash_token"
+# trigger = "aelix"
+
+# Per-channel settings, keyed by channel ID (26 characters).
+# [channels."REPLACE_WITH_A_CHANNEL_ID"]
+# prompt = "This channel is about the payment service. Answer briefly."
+# require_mention = false        # answer every message here (a free-response channel)
+# allowed_tools = ["read", "grep"]

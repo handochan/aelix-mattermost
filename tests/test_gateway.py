@@ -25,7 +25,7 @@ from aelix_mattermost.instance import instance_lock
 from aelix_mattermost.mattermost import AuthenticationError, MattermostClient, MattermostError, split_message
 from aelix_mattermost.routing import route_event
 from aelix_mattermost.rpc import RpcError, RpcProcess, RpcTimeout
-from aelix_mattermost.storage import Store, write_context
+from aelix_mattermost.storage import SCHEMA_VERSION, Store, write_context
 
 FAKE = Path(__file__).with_name("fake_aelix.py").resolve()
 EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.toml"
@@ -234,7 +234,10 @@ class ConfigurationTests(unittest.TestCase):
         lines = []
         for line in EXAMPLE.read_text(encoding="utf-8").splitlines():
             match = re.fullmatch(r"# (\w+) = (.+)", line)
-            if match and match[2].startswith('"/'):  # a path: point it at a real file
+            header = re.fullmatch(r"# (\[.+\])", line)
+            if header:  # an optional table such as [slash_command] or [channels."<id>"]
+                line = header[1].replace("REPLACE_WITH_A_CHANNEL_ID", "c" * 26)
+            elif match and match[2].startswith('"/'):  # a path: point it at a real file
                 (self.root / match[1]).write_text("file-token\n")
                 line = f'{match[1]} = "{self.root / match[1]}"'
             elif match:
@@ -246,6 +249,9 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(value.token, "file-token")
         self.assertEqual(value.mcp_config, (self.root / "mcp_config").resolve())
         self.assertEqual(value.model, "internal/my-model")
+        self.assertEqual((value.slash_listen, value.slash_token), ("127.0.0.1:8066", "file-token"))
+        self.assertEqual(value.channel("c" * 26).allowed_tools, ("read", "grep"))
+        self.assertFalse(value.mention_required("c" * 26))
 
     def test_store_persists_dedup_and_marks_interrupted(self):
         path = self.root
@@ -286,7 +292,7 @@ class StoreTests(unittest.TestCase):
         db.commit()
         db.close()
         store = Store(self.root)
-        self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         self.assertEqual(store.db.execute("SELECT status FROM posts WHERE id='old'").fetchone()[0], "interrupted")
         self.assertEqual(store.session_file("key"), Path("/sessions/a.jsonl"))
         self.assertFalse(store.claim("old"))
@@ -616,7 +622,7 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
                 break
             await asyncio.sleep(0.01)
         await self.gateway.handle(event(post_id="p2", user="u2", root="r", text="@aelix !cancel"))
-        self.assertIn("취소할 내 실행", self.server.posts[-1]["message"])
+        await until(lambda: "취소할 내 실행" in self.server.posts[-1]["message"])
         await self.gateway.handle(event(post_id="p3", root="r", text="@aelix !cancel"))
         await self.gateway.drain()
         self.assertEqual(replies(self.server)[-1], "요청을 취소했습니다.")
@@ -666,7 +672,10 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
             await self.gateway.handle(event(root="r", text="@aelix __error__"))
             await self.gateway.handle(event(post_id="p2", user="u2", root="r", text="@aelix __hang__"))
             for _ in range(200):
-                session = next(iter(self.gateway.sessions.values()))
+                session = next(iter(self.gateway.sessions.values()), None)
+                if session is None:
+                    await asyncio.sleep(0.01)
+                    continue
                 # The failed run's child stays alive, so a live child no longer shows that the
                 # second request has its placeholder; its prompt reaching Aelix does.
                 if session.owner == "u2" and prompted(session, "__hang__"):
