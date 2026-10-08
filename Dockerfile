@@ -1,8 +1,8 @@
 # aelix-mattermost: hardened single-container image. The gateway and every Aelix child
 # run here as uid/gid 10001; only the /var/lib/aelix-mattermost volume is writable.
 #
-#   docker build -t aelix-mattermost:0.1.0 .
-#   docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.1.0 .   # air-gapped
+#   docker build -t aelix-mattermost:0.2.0 .
+#   docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.2.0 .   # air-gapped
 #
 # OFFLINE=1 installs only from deploy/docker/wheelhouse (wheels and tini_*.deb); an
 # optional wheelhouse/constraints.txt pins every dependency. See docs/docker.md.
@@ -26,7 +26,7 @@ FROM python:${PYTHON_VERSION}-slim-bookworm
 ARG AELIX_VERSION=0.1.0b2
 ARG OFFLINE=0
 # Image labels only; VERSION follows pyproject.toml.
-ARG VERSION=0.1.0
+ARG VERSION=0.2.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="aelix-mattermost" \
       org.opencontainers.image.description="Mattermost bot gateway for Aelix in a hardened single container" \

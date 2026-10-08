@@ -16,7 +16,7 @@ name: aelix-mattermost
 
 services:
   aelix-mattermost:
-    image: ${AELIX_MATTERMOST_IMAGE:-aelix-mattermost:0.1.0}
+    image: ${AELIX_MATTERMOST_IMAGE:-aelix-mattermost:0.2.0}
     build:
       context: ../..
     user: "10001:10001"

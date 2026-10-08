@@ -1,7 +1,7 @@
 [plugin]
 id = "aelix-mattermost"
 name = "Aelix Mattermost"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Mattermost bot gateway with isolated Aelix RPC conversations."
 authors = ["Dochan Han"]
 repository = "https://github.com/handochan/aelix-mattermost"
