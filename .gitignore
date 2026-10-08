@@ -13,3 +13,9 @@ config.toml
 *.db
 *.db-shm
 *.db-wal
+# Local deployment files: provider keys, secrets, model and extension files, state backups
+*.env
+*.tgz
+deploy/docker/models.json
+deploy/docker/secrets/
+deploy/docker/extensions/

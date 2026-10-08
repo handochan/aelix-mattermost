@@ -1,3 +1,18 @@
+# Check a deployment as this unit runs it (same user, environment and sandbox):
+#   sudo systemd-run --pipe --wait --collect -p User=aelix-mattermost \
+#     -p EnvironmentFile=/etc/aelix-mattermost/secrets.env \
+#     -p Environment=PATH=/opt/aelix-mattermost/.venv/bin:/usr/bin:/bin \
+#     -p Environment=HOME=/var/lib/aelix-mattermost/home \
+#     -p Environment=AELIX_CODING_AGENT_DIR=/var/lib/aelix-mattermost/aelix-agent \
+#     -p Environment=PYTHONNOUSERSITE=1 \
+#     -p ProtectSystem=strict -p ProtectHome=read-only -p PrivateTmp=true \
+#     -p ReadWritePaths=/var/lib/aelix-mattermost \
+#     /opt/aelix-mattermost/.venv/bin/aelix-mattermost doctor \
+#     --config /etc/aelix-mattermost/config.toml --check-aelix
+# Liveness, without the token or any network access (exit 0 when healthy):
+#   sudo -u aelix-mattermost /opt/aelix-mattermost/.venv/bin/aelix-mattermost healthcheck \
+#     --config /etc/aelix-mattermost/config.toml
+
 [Unit]
 Description=Aelix Mattermost bot gateway
 After=network-online.target
@@ -10,13 +25,24 @@ Group=aelix-mattermost
 WorkingDirectory=/opt/aelix-mattermost
 EnvironmentFile=/etc/aelix-mattermost/secrets.env
 Environment=PATH=/opt/aelix-mattermost/.venv/bin:/usr/local/bin:/usr/bin:/bin
+# Aelix opens <agent dir>/auth.json read-write on every start, so its HOME and agent
+# dir must be writable; ProtectHome=read-only makes an account's /home read-only.
+# Provider configuration (models.json, optional settings.json and auth.json) goes into
+# /var/lib/aelix-mattermost/aelix-agent, owned by aelix-mattermost.
+Environment=HOME=/var/lib/aelix-mattermost/home
+Environment=AELIX_CODING_AGENT_DIR=/var/lib/aelix-mattermost/aelix-agent
+# HOME is writable: never import user site-packages planted there by a tool.
+Environment=PYTHONNOUSERSITE=1
 ExecStart=/opt/aelix-mattermost/.venv/bin/aelix-mattermost run --config /etc/aelix-mattermost/config.toml
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=15
-KillMode=control-group
+# SIGTERM reaches only the gateway, which aborts runs, posts shutdown notices and stops
+# its Aelix children; whatever is left afterwards (tool processes) gets SIGKILL.
+KillMode=mixed
+TimeoutStopSec=30
 UMask=0077
-StateDirectory=aelix-mattermost
+StateDirectory=aelix-mattermost aelix-mattermost/home aelix-mattermost/aelix-agent
+StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

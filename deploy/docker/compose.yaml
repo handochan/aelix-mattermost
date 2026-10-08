@@ -1,0 +1,75 @@
+# Hardened single-container deployment: the gateway and every Aelix child share this
+# container and its state volume. Guide and security model: docs/docker.md.
+# Prepare this directory once:
+#
+#   cp config.toml.example config.toml      # server URL, allowed_users, model
+#   cp models.json.example models.json      # model provider(s) for Aelix
+#   cp provider.env.example provider.env    # provider API keys; chmod 600
+#   mkdir -p extensions secrets             # extensions/ may stay empty
+#   (umask 077; printf '%s' "$BOT_TOKEN" > secrets/mattermost_token)
+#   sudo chown 10001:10001 secrets/mattermost_token   # Linux hosts: Compose ignores
+#                                                     # uid/gid/mode on file secrets
+#   docker compose build && docker compose up -d && docker compose ps
+#
+# Keep the hardening below in step with deploy/docker/smoke_test.py.
+name: aelix-mattermost
+
+services:
+  aelix-mattermost:
+    image: ${AELIX_MATTERMOST_IMAGE:-aelix-mattermost:0.1.0}
+    build:
+      context: ../..
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # About 85 MiB per live Aelix child x gateway.max_live_processes (default 8),
+    # plus ~100 MiB for the gateway and /tmp, plus headroom for tools. Raise together.
+    mem_limit: 1g
+    pids_limit: 256
+    cpus: 2.0
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file: provider.env
+    secrets:
+      - mattermost_token  # /run/secrets/mattermost_token (config: token_file)
+    # Long syntax: a missing file fails fast instead of Docker creating a directory.
+    volumes:
+      - type: volume
+        source: state
+        target: /var/lib/aelix-mattermost
+      - type: bind
+        source: ./config.toml
+        target: /etc/aelix-mattermost/config.toml
+        read_only: true
+      - type: bind
+        source: ./models.json
+        target: /var/lib/aelix-mattermost/aelix-agent/models.json
+        read_only: true
+      - type: bind
+        source: ./extensions
+        target: /etc/aelix-mattermost/extensions
+        read_only: true
+      # Optional internal CA bundle for Mattermost (config: ca_file):
+      # - type: bind
+      #   source: ./internal-ca.pem
+      #   target: /etc/aelix-mattermost/internal-ca.pem
+      #   read_only: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # Health comes from the image: "aelix-mattermost healthcheck" (no network access).
+    # The image already runs tini as PID 1: do not add "init: true".
+    # Never mount /var/run/docker.sock: it grants root on the host.
+
+secrets:
+  mattermost_token:
+    file: ./secrets/mattermost_token
+
+volumes:
+  state:

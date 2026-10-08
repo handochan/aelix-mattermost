@@ -9,9 +9,13 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v5
@@ -33,3 +37,52 @@ jobs:
               assert manifest['plugin']['id'] == 'aelix-mattermost'
               assert manifest['plugin']['entry']['python'] == 'aelix_mattermost.extension:setup'
           PY
+
+  aiohttp-lower-bound:
+    name: test (ubuntu-latest, Python 3.11, aiohttp 3.10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      # The oldest aiohttp that pyproject.toml accepts (aiohttp>=3.10,<4).
+      - run: python -m pip install . "aiohttp==3.10.0"
+      - run: python -c "import aiohttp; assert aiohttp.__version__ == '3.10.0', aiohttp.__version__"
+      - run: python -m unittest discover -s tests -v
+
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE: aelix-mattermost:ci
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the image from the repository Dockerfile
+        run: docker build --tag "$IMAGE" .
+      - name: Run the CLI in the image without network access
+        run: |
+          set -euo pipefail
+          expected=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          actual=$(docker run --rm --network none "$IMAGE" --version)
+          if [ "$actual" != "$expected" ]; then
+            echo "the image reports $actual, pyproject.toml $expected"; exit 1
+          fi
+          config="$RUNNER_TEMP/config.toml"
+          printf '%s\n' '[mattermost]' 'url = "https://mattermost.example.invalid"' \
+            'allowed_users = ["ci-user-id"]' '[aelix]' 'command = ["aelix"]' \
+            '[gateway]' 'state_dir = "/var/lib/aelix-mattermost/state"' > "$config"
+          chmod 644 "$config"
+          cli() {
+            docker run --rm --network none --read-only --cap-drop ALL \
+              --security-opt no-new-privileges:true -e MATTERMOST_TOKEN=ci-dummy-token \
+              -v "$config:/etc/aelix-mattermost/config.toml:ro" "$IMAGE" \
+              "$@" --config /etc/aelix-mattermost/config.toml
+          }
+          cli check-config
+          # The image's HEALTHCHECK command: without a running gateway it must fail.
+          if cli healthcheck; then
+            echo "healthcheck passed although no gateway is running"; exit 1
+          fi
