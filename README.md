@@ -5,7 +5,7 @@ Talk to your own Aelix runtime in DMs, group DMs, public/private channels and th
 It uses ordinary Bot Accounts, the v4 REST API and a header-authenticated WebSocket;
 Mattermost's commercial Agents plugin is not required.
 
-**0.1.0 alpha:** the REST/WebSocket/subprocess integration is tested against local doubles
+**0.2.0 alpha:** the REST/WebSocket/subprocess integration is tested against local doubles
 that follow Mattermost server and Aelix RPC behaviour. Deployment against your Mattermost
 server and installed Aelix still requires `doctor` and a first-message smoke test. No real
 credentials ship here. [한국어 안내](README.ko.md).
@@ -90,7 +90,7 @@ Build the wheel, then install it in the Aelix environment if you want the `/matt
 
 ```bash
 python -m pip wheel . --no-deps -w dist
-aelix extension install ./dist/aelix_mattermost-0.1.0-py3-none-any.whl --yes
+aelix extension install ./dist/aelix_mattermost-0.2.0-py3-none-any.whl --yes
 aelix extension verify aelix-mattermost
 ```
 
@@ -220,6 +220,8 @@ seconds) bounds a cold Aelix start.
 
 See [deployment](docs/deployment.md) (systemd and closed networks), [Docker](docs/docker.md),
 [security/limitations](SECURITY.md) and the [systemd example](deploy/aelix-mattermost.service).
+Upgrading from 0.1.0 migrates the state database in place and changes the systemd unit:
+follow the [upgrade notes](CHANGELOG.md#upgrading-from-010) and back up the state directory first.
 The Docker image protects the host (uid 10001, read-only root, no capabilities, resource
 limits, token as a file secret) but not one conversation from another: read its
 [security model](docs/docker.md#security-model) before enabling shell or file tools.

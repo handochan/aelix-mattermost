@@ -2,7 +2,7 @@
 
 Mattermost **Team Edition**에 Aelix를 연결하는 외부 봇 Gateway와 Aelix 확장 패키지입니다.
 공식 Agents 플러그인이나 유료 라이선스 없이 일반 Bot Account와 REST/WebSocket으로 연결합니다.
-**0.1.0 alpha**이며 Mattermost 서버와 Aelix RPC 동작을 따르는 로컬 테스트 대역으로 검증했습니다.
+**0.2.0 alpha**이며 Mattermost 서버와 Aelix RPC 동작을 따르는 로컬 테스트 대역으로 검증했습니다.
 실제 사내 서버·Aelix·모델 연결은 배포 환경에서 `doctor`와 첫 메시지로 확인해야 합니다.
 
 ## 설치
@@ -119,8 +119,10 @@ wheel을 같은 경로에서 재설치하려면 `--repin`이 필요합니다.
 - `run`은 10초마다 `<state_dir>/health.json`을 갱신합니다. `aelix-mattermost healthcheck --config
   config.toml`은 토큰과 네트워크 없이 이 파일만 읽어, 최신이고 WebSocket이 연결된 경우에만 0으로
   종료합니다. 상태 디렉터리는 비공개이므로 서비스 계정으로 실행하세요.
-- 같은 `state_dir`에는 서비스 한 개만 실행할 수 있습니다. 이 버전은 처음 시작할 때 `gateway.db`를
-  스키마 1로 올리므로, 이전 빌드로 되돌릴 때는 업그레이드 전 백업을 복원하세요.
+- 같은 `state_dir`에는 서비스 한 개만 실행할 수 있습니다. 0.2.0은 처음 시작할 때 `gateway.db`를
+  스키마 1로 올리며, 0.1.0을 이 DB로 실행하면 첫 요청을 받을 때 SQLite 오류로 종료됩니다.
+  업그레이드 전에 서비스를 멈추고 상태 디렉터리를 백업해 두었다가 0.1.0으로 되돌릴 때 복원하세요.
+  0.1.0에서 올릴 때 필요한 조치는 [CHANGELOG.md](CHANGELOG.md#upgrading-from-010)를 참고하세요.
 - 권한이 좁은 전용 서비스 계정이나 Docker 이미지로 운영하세요.
 
 [배포 절차](docs/deployment.md), [Docker 배포](docs/docker.md), [보안 경계](SECURITY.md)를

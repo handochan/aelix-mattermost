@@ -131,7 +131,9 @@ macOS only. Verify shutdown/descendants on your target Windows server before pro
 
 Stop the service before replacing wheels. Do not share a state directory across live processes.
 Back up private state/transcripts according to your retention policy; keep a previous wheel
-for rollback. The first start of this release upgrades `gateway.db` in place to schema
-version 1 (a new placeholder column), and earlier builds cannot record posts in the upgraded
-database: restore the pre-upgrade state backup when rolling back. A database written by a newer
-release is refused. Resetting context retains old files.
+for rollback. Before upgrading, read the upgrade notes in [CHANGELOG.md](../CHANGELOG.md) and,
+with the service stopped, back up the state directory. The first start of 0.2.0 upgrades
+`gateway.db` in place to schema version 1 (a new placeholder column), and on the upgraded
+database 0.1.0 exits with an SQLite error on the first post it accepts: restore that backup
+when rolling back to 0.1.0. A database written by a newer release is refused. Resetting
+context retains old files.

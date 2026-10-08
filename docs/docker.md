@@ -83,7 +83,7 @@ either set `SSL_CERT_FILE` in `provider.env` to a mounted bundle that contains t
 plus your CA, or build a derived image:
 
 ```dockerfile
-FROM aelix-mattermost:0.1.0
+FROM aelix-mattermost:0.2.0
 USER 0
 COPY internal-ca.crt /usr/local/share/ca-certificates/internal-ca.crt
 RUN update-ca-certificates
@@ -99,12 +99,12 @@ same environment as Aelix.
 **Build outside, move the image (recommended).**
 
 ```bash
-docker build -t aelix-mattermost:0.1.0 .                  # repository root
-docker save aelix-mattermost:0.1.0 | gzip > aelix-mattermost-0.1.0.tar.gz
-sha256sum aelix-mattermost-0.1.0.tar.gz > aelix-mattermost-0.1.0.tar.gz.sha256
+docker build -t aelix-mattermost:0.2.0 .                  # repository root
+docker save aelix-mattermost:0.2.0 | gzip > aelix-mattermost-0.2.0.tar.gz
+sha256sum aelix-mattermost-0.2.0.tar.gz > aelix-mattermost-0.2.0.tar.gz.sha256
 # inside the closed network, next to deploy/docker:
-sha256sum -c aelix-mattermost-0.1.0.tar.gz.sha256
-docker load -i aelix-mattermost-0.1.0.tar.gz
+sha256sum -c aelix-mattermost-0.2.0.tar.gz.sha256
+docker load -i aelix-mattermost-0.2.0.tar.gz
 docker compose up -d --no-build
 ```
 
@@ -125,7 +125,7 @@ Move the repository (with the wheelhouse) and the base image, then build with no
 
 ```bash
 docker load -i python-3.12-slim-bookworm.tar.gz
-docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.1.0 .
+docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.2.0 .
 ```
 
 `OFFLINE=1` adds `--no-index` to every pip call and installs `tini` from the `.deb`. The
@@ -134,7 +134,7 @@ transitive version (online builds too), first write `constraints.txt` from a tes
 pass it to the download: the build applies `wheelhouse/constraints.txt` automatically.
 
 ```bash
-docker run --rm --entrypoint pip aelix-mattermost:0.1.0 freeze --exclude aelix-mattermost \
+docker run --rm --entrypoint pip aelix-mattermost:0.2.0 freeze --exclude aelix-mattermost \
   > deploy/docker/wheelhouse/constraints.txt
 # then add: -c /wheelhouse/constraints.txt to the pip download above
 ```
@@ -144,8 +144,9 @@ needs Mattermost and the model endpoint.
 
 ## Upgrades and rollback
 
-Tag every build (`aelix-mattermost:0.1.0`, `0.1.1`, ...) and keep the previous image;
-`AELIX_MATTERMOST_IMAGE` selects the tag in `compose.yaml`. Rebuild with
+Tag every build (`aelix-mattermost:0.2.0`, `0.2.1`, ...) and keep the previous image;
+`AELIX_MATTERMOST_IMAGE` selects the tag in `compose.yaml`. [CHANGELOG.md](../CHANGELOG.md)
+lists what each release changes, state migrations included. Rebuild with
 `--build-arg AELIX_VERSION=...` for a new Aelix, then run `doctor --check-aelix` and the smoke
 test before switching. Back up the volume while the service is stopped. The archive holds
 every transcript, `gateway.db` and Aelix's `auth.json`, so it is written with `umask 077`
@@ -155,9 +156,9 @@ every transcript, `gateway.db` and Aelix's `auth.json`, so it is written with `u
 docker compose stop
 sudo install -d -m 0700 /var/backups/aelix-mattermost
 docker run --rm --user 0:0 --entrypoint sh -v aelix-mattermost_state:/data:ro \
-  -v /var/backups/aelix-mattermost:/backup aelix-mattermost:0.1.0 \
+  -v /var/backups/aelix-mattermost:/backup aelix-mattermost:0.2.0 \
   -c 'umask 077 && tar -czf /backup/state-$(date +%Y%m%d).tgz -C /data .'
-AELIX_MATTERMOST_IMAGE=aelix-mattermost:0.1.1 docker compose up -d --no-build
+AELIX_MATTERMOST_IMAGE=aelix-mattermost:0.2.1 docker compose up -d --no-build
 ```
 
 On Docker Desktop, use a mode 0700 directory under your home instead of `/var/backups`.
@@ -166,7 +167,7 @@ previous tag. Run as root, `tar` restores the original owners and modes:
 
 ```bash
 docker run --rm --user 0:0 --entrypoint sh -v aelix-mattermost_state:/data \
-  -v /var/backups/aelix-mattermost:/backup:ro aelix-mattermost:0.1.0 \
+  -v /var/backups/aelix-mattermost:/backup:ro aelix-mattermost:0.2.0 \
   -c 'umask 077 && tar -xzf /backup/state-YYYYMMDD.tgz -C /data'
 ```
 
