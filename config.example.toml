@@ -1,6 +1,9 @@
 [mattermost]
 url = "https://mattermost.example.internal"
 token_env = "MATTERMOST_TOKEN"
+# Or read the token from a file such as a Docker/Kubernetes secret; it takes precedence
+# over token_env. Relative paths are relative to this file.
+# token_file = "/run/secrets/mattermost_token"
 # User IDs, not @usernames. Replace this before running.
 allowed_users = ["REPLACE_WITH_YOUR_MATTERMOST_USER_ID"]
 # Empty: allowed users may invoke the bot in any channel/group it has joined.
@@ -22,18 +25,27 @@ allowed_tools = []
 extensions = []
 # Example: allowed_tools = ["equipment_summary"]
 #          extensions = ["./extensions/equipment.py"]
+# MCP servers start only from this file; the service account's own mcp.json is ignored.
+# mcp_config = "/etc/aelix-mattermost/mcp.json"
 
 [gateway]
 state_dir = "var"
 # "user": a separate transcript per caller AND thread; "thread": shared context.
 session_scope = "user"
 max_concurrent_runs = 3
+# Aelix children kept running between requests (about 85 MiB each); when the limit is
+# reached the least recently used idle one stops. At least max_concurrent_runs.
+max_live_processes = 8
 max_sessions = 64
 max_queue_per_session = 4
 idle_timeout = 300
 run_timeout = 180
 rpc_timeout = 20
+# Budget for a cold `aelix --mode rpc` start (never shorter than rpc_timeout).
+startup_timeout = 60
 max_tool_calls = 30
 max_input_chars = 20000
 max_output_chars = 60000
 dedup_days = 30
+# Also log a redacted tail of Aelix stderr when a request fails.
+log_aelix_stderr = false

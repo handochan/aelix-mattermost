@@ -1,0 +1,52 @@
+# Container configuration for deploy/docker/compose.yaml, mounted read-only at
+# /etc/aelix-mattermost/config.toml. All paths are container paths. No secrets here:
+# the bot token is the Docker secret "mattermost_token".
+
+[mattermost]
+url = "https://mattermost.example.internal"
+# Takes precedence over token_env.
+token_file = "/run/secrets/mattermost_token"
+# User IDs, not @usernames. Replace this before running.
+allowed_users = ["REPLACE_WITH_YOUR_MATTERMOST_USER_ID"]
+# Empty: allowed users may invoke the bot in any channel/group it has joined.
+allowed_channels = []
+allow_all_users = false
+require_mention = true
+allow_insecure_http = false
+# Internal CA for the Mattermost connection; mount it read-only (see compose.yaml).
+# ca_file = "/etc/aelix-mattermost/internal-ca.pem"
+max_post_chars = 3500
+
+[aelix]
+# Installed in the image. Children inherit HOME and AELIX_CODING_AGENT_DIR from it.
+command = ["aelix"]
+# provider/model from models.json (/var/lib/aelix-mattermost/aelix-agent/models.json).
+model = "internal/my-model"
+offline = true
+work_dir = "/var/lib/aelix-mattermost/workspace"
+# Empty disables ALL tools. Every conversation shares this container, its uid and its
+# volume: read the security model in docs/docker.md before enabling any tool.
+allowed_tools = []
+extensions = []
+# Example: allowed_tools = ["equipment_summary"]
+#          extensions = ["/etc/aelix-mattermost/extensions/equipment.py"]
+# MCP servers are off unless you name a config file (mount it read-only):
+# mcp_config = "/etc/aelix-mattermost/mcp.json"
+
+[gateway]
+state_dir = "/var/lib/aelix-mattermost/state"
+# "user": a separate transcript per caller AND thread; "thread": shared context.
+session_scope = "user"
+max_concurrent_runs = 3
+# Live Aelix children kept warm (~85 MiB each); keep compose.yaml mem_limit in step.
+max_live_processes = 8
+max_sessions = 64
+max_queue_per_session = 4
+idle_timeout = 300
+run_timeout = 180
+rpc_timeout = 20
+startup_timeout = 60
+max_tool_calls = 30
+max_input_chars = 20000
+max_output_chars = 60000
+dedup_days = 30

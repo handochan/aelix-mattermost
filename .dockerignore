@@ -1,0 +1,35 @@
+# Allowlist: only what the image build reads is sent to the builder.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!NOTICE
+!src/
+!deploy/docker/wheelhouse/
+
+# Never send these, even below an allowed path: VCS data, environments, build
+# output, caches, runtime state, local configuration and secrets.
+**/.git
+**/.omc
+**/.venv
+**/venv
+**/build
+**/dist
+**/*.egg-info
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage*
+**/htmlcov
+**/var
+**/workspace
+**/config.toml
+**/*.env
+**/.env*
+**/secrets
+**/*.pem
+**/*.key
+**/*.db
+**/*.db-*
