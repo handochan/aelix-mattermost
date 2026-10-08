@@ -2,7 +2,14 @@
 
 - Use a dedicated Member-role bot, HTTPS and an internal CA bundle where needed.
 - Bot membership limits event visibility; the gateway additionally checks caller/channel IDs.
-- An empty user allowlist refuses startup unless an administrator explicitly enables all users.
+- An empty user allowlist refuses startup unless an administrator explicitly enables all users,
+  names admins, or enables pairing. Pairing codes are 8 characters from a 32-letter alphabet
+  (40 bits), valid for an hour, at most 50 pending, and approved only by `admins` in a DM with
+  the bot or by the CLI on the host; unknown users get at most one reply per 10 minutes and
+  never in channels, and a denied user gets no new code for 24 hours. On a server where anyone
+  can sign up, 50 accounts can keep the pending list full: keep pairing off there, or watch
+  `aelix-mattermost pairing list`. Approved users are stored in the state database: back it up and review
+  `aelix-mattermost pairing list` like any allowlist.
 - Integration posts carry a person's user ID: an incoming webhook its owner's, a custom
   slash-command response its caller's. Posts that set `from_webhook`, `from_oauth_app` or
   `from_plugin` are ignored. A plugin slash command that posts as its caller through the plugin
@@ -55,7 +62,30 @@
   retention, backup and filesystem ACL policies. Resetting context retains old files.
 - WebSocket resume replays only recent events from the same server node; it is not historical
   backfill. Delivery/side effects are not exactly once, and interrupted requests are not replayed.
-- Time and tool-call budgets are not token-cost budgets.
+- Time and tool-call budgets are not token-cost budgets. `!model` switches only among
+  `aelix.models`, which may cost more than the default.
+- Thread history quotes posts into the prompt, marked as untrusted, and attachments are
+  inlined: both are prompt-injection input like the message itself. History quotes only
+  people allowed to use the bot and the bot's own answers; other members, webhooks,
+  integrations and other bots are left out. The bot only reads threads in channels it is a
+  member of, and only when an allowed user asks there. Attachments are saved to disk only for
+  conversations with tools (200 MB per conversation, removed by `!new`); delete work
+  directories according to your retention policy.
+- Per-channel `allowed_tools` decides what a channel's model may call; it is not an isolation
+  boundary. Every conversation runs as the same account, so a shell or file tool allowed in one
+  channel can read other conversations' files.
+- Files the model writes into its `outbox/` are uploaded to the thread it answers in (regular
+  files only; symbolic links and special files are refused). With a shell or file tool, the
+  model can copy anything the service account can read into the outbox, so allowing such tools
+  means the people who can talk to the bot can receive those files.
+- The optional slash command endpoint trusts the Mattermost command token alone: whoever holds
+  it can act as any user ID it names (`status`, `stop`, `new`, `model`, `usage`, `compact` on
+  that user's conversations; never `pair`). Keep the token in a file secret, bind the endpoint
+  where only Mattermost reaches it, and regenerate the token in Mattermost if it leaks.
+  Follow-ups go only to `mattermost.url` (only the hook ID of `response_url` is used).
+- `aelix.extensions` module names are loaded through a generated file in the state directory,
+  because Aelix would otherwise resolve a bare module name against the working directory,
+  which tools can write to.
 - Cancel, timeout and shutdown first ask Aelix to abort the run, which stops its tool process
   trees, then terminate the child's process group. A descendant that escapes both lives until the
   service stops (systemd `KillMode=mixed`, or the container's PID namespace). Windows taskkill

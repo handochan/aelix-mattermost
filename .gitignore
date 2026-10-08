@@ -19,3 +19,4 @@ config.toml
 deploy/docker/models.json
 deploy/docker/secrets/
 deploy/docker/extensions/
+deploy/docker/compose.override.yaml

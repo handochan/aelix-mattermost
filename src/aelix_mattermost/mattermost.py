@@ -53,6 +53,17 @@ class _NoHello(MattermostError):
     """The WebSocket closed or stayed silent before proving it was authenticated."""
 
 
+class FileTooLarge(MattermostError):
+    """A download exceeded its size limit."""
+
+
+def _segment(value: str) -> str:
+    """A server-provided id used as a URL path segment."""
+    if not value or not value.isascii() or not value.isalnum():
+        raise MattermostError("Invalid Mattermost id")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Message splitting
 
@@ -173,10 +184,20 @@ class MattermostClient:
 
         POST is repeated only with a pending_post_id, and only while the server still
         deduplicates it (CREATE_TIMEOUT per attempt, CREATE_RETRY_WINDOW in total)."""
+        result = await self._api(method, path, data, attempts)
+        if not isinstance(result, dict):
+            raise MattermostError("Invalid Mattermost API result")
+        return result
+
+    async def api_list(self, method: str, path: str, data: object = None) -> object:
+        """Like api(), for endpoints whose body or result is a JSON array."""
+        return await self._api(method, path, data, MAX_ATTEMPTS)
+
+    async def _api(self, method: str, path: str, data: object, attempts: int) -> object:
         if self.session is None:
             raise MattermostError("Client is not open")
         name = path.split("/")[0]
-        create = method == "POST" and bool(data and data.get("pending_post_id"))
+        create = method == "POST" and isinstance(data, dict) and bool(data.get("pending_post_id"))
         if method == "POST" and not create:
             attempts = 1
         options = {"timeout": aiohttp.ClientTimeout(total=CREATE_TIMEOUT)} if create else {}
@@ -213,24 +234,129 @@ class MattermostClient:
         raise AssertionError("unreachable")
 
     @staticmethod
-    async def _json(response: aiohttp.ClientResponse) -> dict:
+    async def _json(response: aiohttp.ClientResponse) -> dict | list:
         try:
             result = await response.json()
         except (ValueError, aiohttp.ContentTypeError) as exc:
             raise MattermostError("Mattermost returned a non-JSON API response") from exc
-        if not isinstance(result, dict):
+        if not isinstance(result, (dict, list)):
             raise MattermostError("Invalid Mattermost API result")
         return result
 
     async def me(self) -> dict:
         return await self.api("GET", "users/me")
 
-    async def post(self, channel_id: str, root_id: str, text: str) -> dict:
+    async def post(self, channel_id: str, root_id: str, text: str,
+                   file_ids: list[str] | None = None) -> dict:
         """Create a post; its pending_post_id makes retries idempotent on the server."""
-        return await self.api("POST", "posts", {
+        body = {
             "channel_id": channel_id, "root_id": root_id, "message": neutralize_mentions(text),
             "props": dict(POST_PROPS), "pending_post_id": uuid.uuid4().hex,
-        })
+        }
+        if file_ids:
+            body["file_ids"] = list(file_ids)
+        return await self.api("POST", "posts", body)
+
+    async def thread(self, root_id: str) -> list[dict]:
+        """Every post of a thread, oldest first."""
+        result = await self.api("GET", f"posts/{_segment(root_id)}/thread")
+        posts, order = result.get("posts"), result.get("order")
+        if not isinstance(posts, dict):
+            raise MattermostError("Invalid Mattermost thread")
+        items = [x for x in posts.values() if isinstance(x, dict)]
+        if isinstance(order, list):
+            rank = {post_id: index for index, post_id in enumerate(order) if isinstance(post_id, str)}
+            items.sort(key=lambda x: rank.get(x.get("id"), -1))  # unknown ids first, then by order
+        return sorted(items, key=lambda x: x.get("create_at") if isinstance(x.get("create_at"), int) else 0)
+
+    async def usernames(self, user_ids: list[str]) -> dict[str, str]:
+        """user id -> username for the ids the server knows."""
+        if not user_ids:
+            return {}
+        users = await self.api_list("POST", "users/ids", list(user_ids))
+        return {x["id"]: x["username"] for x in users
+                if isinstance(x, dict) and isinstance(x.get("id"), str) and isinstance(x.get("username"), str)}
+
+    async def channel(self, channel_id: str) -> dict:
+        return await self.api("GET", f"channels/{_segment(channel_id)}")
+
+    async def direct_channel(self, user_a: str, user_b: str) -> str:
+        """The DM channel of two users (created on first use)."""
+        channel = await self.api_list("POST", "channels/direct", [user_a, user_b])
+        channel_id = channel.get("id") if isinstance(channel, dict) else None
+        if not isinstance(channel_id, str) or not channel_id:
+            raise MattermostError("Mattermost did not return a direct channel")
+        return channel_id
+
+    async def typing(self, user_id: str, channel_id: str, parent_id: str = "") -> None:
+        await self.api("POST", f"users/{_segment(user_id)}/typing",
+                       {"channel_id": channel_id, "parent_id": parent_id})
+
+    async def react(self, user_id: str, post_id: str, emoji: str) -> None:
+        await self.api("POST", "reactions", {"user_id": user_id, "post_id": post_id, "emoji_name": emoji})
+
+    async def file_info(self, file_id: str) -> dict:
+        return await self.api("GET", f"files/{_segment(file_id)}/info")
+
+    async def download(self, file_id: str, limit: int) -> bytes:
+        """A file's bytes; FileTooLarge as soon as it exceeds `limit`."""
+        if self.session is None:
+            raise MattermostError("Client is not open")
+        url = f"{self.base}/files/{_segment(file_id)}"
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                async with self.session.get(url, allow_redirects=False,
+                                            timeout=aiohttp.ClientTimeout(total=120)) as response:
+                    status = response.status
+                    if status == 401:
+                        raise AuthenticationError("Mattermost denied GET files", status)
+                    if status == 403:
+                        raise ForbiddenError("Mattermost forbade GET files", status)
+                    if 200 <= status < 300:
+                        if (response.content_length or 0) > limit:
+                            raise FileTooLarge(f"file is larger than {limit} bytes")
+                        data = bytearray()
+                        async for chunk in response.content.iter_chunked(64 * 1024):
+                            data += chunk
+                            if len(data) > limit:
+                                raise FileTooLarge(f"file is larger than {limit} bytes")
+                        return bytes(data)
+                    error = MattermostError(f"Mattermost HTTP {status}", status)
+                    if status != 429 and status < 500:
+                        raise error
+            except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, TimeoutError) as exc:
+                error = MattermostError(f"Mattermost GET files failed ({type(exc).__name__})")
+                error.__cause__ = exc
+            if attempt == MAX_ATTEMPTS:
+                raise error
+            await asyncio.sleep(0.5 * 2 ** (attempt - 1) * random.uniform(0.8, 1.2))
+        raise AssertionError("unreachable")
+
+    async def upload(self, channel_id: str, name: str, data: bytes, content_type: str) -> str:
+        """Upload one file to a channel; returns its file id for a post's file_ids."""
+        if self.session is None:
+            raise MattermostError("Client is not open")
+        form = aiohttp.FormData()
+        form.add_field("channel_id", channel_id)
+        form.add_field("files", data, filename=name, content_type=content_type)
+        try:
+            async with self.session.post(f"{self.base}/files", data=form, allow_redirects=False,
+                                         timeout=aiohttp.ClientTimeout(total=300)) as response:
+                status = response.status
+                if status == 401:
+                    raise AuthenticationError("Mattermost denied POST files", status)
+                if status == 403:
+                    raise ForbiddenError("Mattermost forbade POST files", status)
+                if not 200 <= status < 300:
+                    raise MattermostError(f"Mattermost HTTP {status}", status)
+                result = await self._json(response)
+        except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, TimeoutError) as exc:
+            raise MattermostError(f"Mattermost POST files failed ({type(exc).__name__})") from exc
+        infos = result.get("file_infos")
+        file_id = infos[0].get("id") if isinstance(infos, list) and infos and isinstance(infos[0], dict) else None
+        if not isinstance(file_id, str) or not file_id:
+            raise MattermostError("Mattermost did not return an uploaded file id")
+        return file_id
 
     async def patch(self, post_id: str, text: str) -> dict:
         return await self.api("PUT", f"posts/{post_id}/patch", {

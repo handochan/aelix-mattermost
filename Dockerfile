@@ -1,8 +1,8 @@
 # aelix-mattermost: hardened single-container image. The gateway and every Aelix child
 # run here as uid/gid 10001; only the /var/lib/aelix-mattermost volume is writable.
 #
-#   docker build -t aelix-mattermost:0.2.0 .
-#   docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.2.0 .   # air-gapped
+#   docker build -t aelix-mattermost:0.3.0 .
+#   docker build --build-arg OFFLINE=1 -t aelix-mattermost:0.3.0 .   # air-gapped
 #
 # OFFLINE=1 installs only from deploy/docker/wheelhouse (wheels and tini_*.deb); an
 # optional wheelhouse/constraints.txt pins every dependency. See docs/docker.md.
@@ -26,7 +26,7 @@ FROM python:${PYTHON_VERSION}-slim-bookworm
 ARG AELIX_VERSION=0.1.0b2
 ARG OFFLINE=0
 # Image labels only; VERSION follows pyproject.toml.
-ARG VERSION=0.2.0
+ARG VERSION=0.3.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="aelix-mattermost" \
       org.opencontainers.image.description="Mattermost bot gateway for Aelix in a hardened single container" \
@@ -73,6 +73,20 @@ RUN --mount=type=bind,source=deploy/docker/wheelhouse,target=/wheelhouse \
         $index $pins --find-links /wheelhouse /dist/aelix_mattermost-*.whl; \
     python -m pip check; \
     aelix-mattermost --version
+# Optional Aelix extension packages (space-separated pip requirements, e.g.
+# --build-arg EXTENSION_PACKAGES="my-aelix-tools==1.2"), installed next to Aelix from the
+# wheelhouse or the index. List their modules in aelix.extensions and their tools in
+# allowed_tools; `aelix-mattermost tools` shows what is installed.
+ARG EXTENSION_PACKAGES=""
+RUN --mount=type=bind,source=deploy/docker/wheelhouse,target=/wheelhouse \
+    set -eu; \
+    if [ -n "$EXTENSION_PACKAGES" ]; then \
+        if [ "$OFFLINE" = "1" ]; then index=--no-index; else index=; fi; \
+        if [ -f /wheelhouse/constraints.txt ]; then pins="-c /wheelhouse/constraints.txt"; else pins=; fi; \
+        python -m pip install --no-cache-dir --disable-pip-version-check --root-user-action=ignore \
+            $index $pins --find-links /wheelhouse $EXTENSION_PACKAGES; \
+        python -m pip check; \
+    fi
 
 # Children inherit this environment: a writable HOME and agent dir on the volume, no
 # bytecode writes on the read-only root and no user site-packages (a writable HOME must

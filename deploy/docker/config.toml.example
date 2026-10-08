@@ -8,6 +8,9 @@ url = "https://mattermost.example.internal"
 token_file = "/run/secrets/mattermost_token"
 # User IDs, not @usernames. Replace this before running.
 allowed_users = ["REPLACE_WITH_YOUR_MATTERMOST_USER_ID"]
+# Admins approve pairing requests with `!pair` in a DM; pairing gives unknown users a code.
+admins = []
+pairing = false
 # Empty: allowed users may invoke the bot in any channel/group it has joined.
 allowed_channels = []
 allow_all_users = false
@@ -22,6 +25,8 @@ max_post_chars = 3500
 command = ["aelix"]
 # provider/model from models.json (/var/lib/aelix-mattermost/aelix-agent/models.json).
 model = "internal/my-model"
+# Models people may pick with `!model` (empty: switching is off).
+models = []
 offline = true
 work_dir = "/var/lib/aelix-mattermost/workspace"
 # Empty disables ALL tools. Every conversation shares this container, its uid and its
@@ -30,6 +35,10 @@ allowed_tools = []
 extensions = []
 # Example: allowed_tools = ["equipment_summary"]
 #          extensions = ["/etc/aelix-mattermost/extensions/equipment.py"]
+# Packages built in with --build-arg EXTENSION_PACKAGES are listed by their module:
+#          extensions = ["my_aelix_tools"]
+# Appended after the built-in Mattermost instructions in the system prompt.
+system_prompt = ""
 # MCP servers are off unless you name a config file (mount it read-only):
 # mcp_config = "/etc/aelix-mattermost/mcp.json"
 
@@ -37,6 +46,12 @@ extensions = []
 state_dir = "/var/lib/aelix-mattermost/state"
 # "user": a separate transcript per caller AND thread; "thread": shared context.
 session_scope = "user"
+# Your message while your request runs: "steer" (inject), "interrupt" or "queue".
+busy_mode = "steer"
+# Progress on the preparing post: "status", "stream" (with the answer so far) or "off".
+progress = "status"
+thread_history_posts = 30
+max_attachments = 10
 max_concurrent_runs = 3
 # Live Aelix children kept warm (~85 MiB each); keep compose.yaml mem_limit in step.
 max_live_processes = 8
@@ -50,3 +65,15 @@ max_tool_calls = 30
 max_input_chars = 20000
 max_output_chars = 60000
 dedup_days = 30
+
+# Optional /aelix slash command (docs/slash-command.md); also enable the port and the
+# mattermost_slash_token secret in compose.yaml.
+# [slash_command]
+# listen = "0.0.0.0:8066"
+# token_file = "/run/secrets/mattermost_slash_token"
+
+# Per-channel settings, keyed by channel ID.
+# [channels."REPLACE_WITH_A_CHANNEL_ID"]
+# prompt = "Answer briefly."
+# require_mention = false
+# allowed_tools = ["read"]

@@ -30,6 +30,17 @@ class Request:
     text: str
     is_dm: bool
     session_key: str
+    channel_type: str = "D"
+    create_at: int = 0  # ms; 0 when the server did not say
+    file_ids: tuple[str, ...] = ()
+    files: tuple[dict, ...] = ()  # metadata.files of the post, when the event carried them
+    sender: str = ""  # the event's sender_name, e.g. "@alice"
+    channel_name: str = ""  # the event's channel_display_name
+    authorized: bool = True  # False: an unknown user's DM, routed only to answer with pairing
+
+    @property
+    def in_thread(self) -> bool:
+        return self.root_id != self.post_id
 
     def context(self, server: str) -> dict[str, str]:
         return {"server": server, "post_id": self.post_id, "channel_id": self.channel_id,
@@ -125,7 +136,29 @@ def strip_mentions(text: str, spans: list[tuple[int, int]]) -> str:
     return _trim("".join(pieces))
 
 
-def route_event(event: dict, config: Config, bot_id: str, bot_username: str) -> Request | None:
+def _text(value: object, limit: int = 200) -> str:
+    return value[:limit] if isinstance(value, str) else ""
+
+
+def _file_ids(post: dict) -> tuple[str, ...]:
+    ids = post.get("file_ids")
+    if not isinstance(ids, list):
+        return ()
+    return tuple(dict.fromkeys(x for x in ids if isinstance(x, str) and x.isalnum() and len(x) <= 64))
+
+
+def _file_metadata(post: dict) -> tuple[dict, ...]:
+    metadata = post.get("metadata")
+    files = metadata.get("files") if isinstance(metadata, dict) else None
+    return tuple(x for x in files if isinstance(x, dict)) if isinstance(files, list) else ()
+
+
+def route_event(event: dict, config: Config, bot_id: str, bot_username: str,
+                paired: Callable[[str], bool] | None = None) -> Request | None:
+    """The request a "posted" event makes, or None when the gateway must ignore it.
+
+    `paired` tells whether a user was approved through pairing. An unknown user's DM is
+    routed with authorized=False when pairing is on, so the gateway can answer with a code."""
     if event.get("event") != "posted":
         return None
     data = event.get("data")
@@ -147,27 +180,40 @@ def route_event(event: dict, config: Config, bot_id: str, bot_username: str) -> 
     props = post.get("props")
     if isinstance(props, dict) and any(props.get(name) in ("true", True) for name in INTEGRATION_PROPS):
         return None
-    if not config.allow_all_users and fields["user_id"] not in config.allowed_users:
-        return None
     channel_type = data.get("channel_type")
     if channel_type not in {"D", "G", "O", "P"}:
         return None
     is_dm = channel_type == "D"
+    user = fields["user_id"]
+    authorized = (config.allow_all_users or user in config.allowed_users or config.is_admin(user)
+                  or (paired is not None and paired(user)))
+    if not authorized and not (is_dm and config.pairing):
+        return None
     if not is_dm and config.allowed_channels and fields["channel_id"] not in config.allowed_channels:
         return None
     spans = mention_spans(fields["message"], bot_username)
-    if not is_dm and config.require_mention and not spans:
+    if not is_dm and config.mention_required(fields["channel_id"]) and not spans:
         return None
     text = strip_mentions(fields["message"], spans)
-    if not text or len(text) > config.max_input_chars:
+    file_ids = _file_ids(post)
+    if (not text and not file_ids) or len(text) > config.max_input_chars:
         return None
     root = post.get("root_id") or fields["id"]
     if not isinstance(root, str):
         return None
-    parts = [config.url.rstrip("/"), bot_id, fields["channel_id"]]
+    created = post.get("create_at")
+    created = created if isinstance(created, int) and not isinstance(created, bool) and created > 0 else 0
+    return Request(fields["id"], fields["channel_id"], user, root, text, is_dm,
+                   session_key(config, bot_id, fields["channel_id"], root, user, is_dm),
+                   channel_type, created, file_ids, _file_metadata(post), _text(data.get("sender_name")),
+                   _text(data.get("channel_display_name")), authorized)
+
+
+def session_key(config: Config, bot_id: str, channel_id: str, root_id: str, user_id: str, is_dm: bool) -> str:
+    """The conversation a post belongs to: a DM channel, or a thread (per user by default)."""
+    parts = [config.url.rstrip("/"), bot_id, channel_id]
     if not is_dm:
-        parts.append(root)
+        parts.append(root_id)
         if config.session_scope == "user":
-            parts.append(fields["user_id"])
-    digest = hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
-    return Request(fields["id"], fields["channel_id"], fields["user_id"], root, text, is_dm, digest)
+            parts.append(user_id)
+    return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()

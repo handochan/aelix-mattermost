@@ -16,13 +16,15 @@ import time
 import tomllib
 from pathlib import Path
 
-from . import __version__
+from . import __version__, pairing
 from .config import Config, ConfigError, load_config
 from .gateway import HEALTH_VERSION, Gateway
 from .instance import instance_lock
 from .mattermost import AuthenticationError, MattermostClient, MattermostError
+from .prompt import Place, system_prompt
 from .rpc import RpcError, RpcProcess
-from .storage import Store, write_context
+from .slash import SlashServer
+from .storage import Store, write_context, write_text
 
 HEALTH_MAX_AGE = 60.0  # seconds; the gateway rewrites health.json at least every 15 s
 WS_PROBE_TIMEOUT = 10.0
@@ -88,30 +90,70 @@ def _stderr_hint(config: Config, rpc: RpcProcess) -> str:
     return f"\nAelix stderr (redacted):\n{tail}" if tail else ""
 
 
+# Aelix's built-in tools (aelix_coding_agent.tools); extensions may register more.
+BUILTIN_TOOLS = {
+    "read": "read files", "ls": "list directories", "find": "find files by name",
+    "grep": "search file contents", "write": "create or overwrite files",
+    "edit": "edit files in place", "bash": "run shell commands",
+}
+
+
+def tool_sets(config: Config) -> dict[tuple[str, ...], list[str]]:
+    """Each distinct allowed-tools list -> the channels with their own list that use it
+    (the global list comes first and also applies to DMs and every other channel)."""
+    sets: dict[tuple[str, ...], list[str]] = {config.allowed_tools: []}
+    for channel_id, settings in config.channels.items():
+        if settings.allowed_tools is not None:
+            sets.setdefault(settings.allowed_tools, []).append(channel_id)
+    return sets
+
+
+def _where(config: Config, tools: tuple[str, ...], channels: list[str]) -> str:
+    """"" for the global list, else " for channel(s) ..." """
+    return "" if tools == config.allowed_tools else f" for channel(s) {', '.join(channels)}"
+
+
+async def _start_child(config: Config, work: Path, tools: tuple[str, ...], where: str) -> dict:
+    context = work / "request-context.json"
+    write_context(context, {"server": config.url, "post_id": "doctor", "channel_id": "doctor",
+                            "user_id": "doctor", "root_id": "doctor"})
+    prompt_file = work / "system-prompt.md"
+    write_text(prompt_file, system_prompt(config, "doctor", Place("D"), tools))
+    rpc = RpcProcess(config, work, work, context, tools=tools, prompt_file=prompt_file)
+    try:
+        try:
+            return await rpc.start()
+        except RpcError as exc:
+            raise RpcError(f"Aelix did not start{where}: {exc}{_stderr_hint(config, rpc)}") from exc
+    finally:
+        await rpc.close()
+
+
 async def aelix_check(config: Config) -> None:
-    """Start Aelix like the gateway does (same flags and environment) and read its state.
+    """Start Aelix like the gateway does (same flags and environment) and read its state,
+    once for every distinct tool list (an unknown tool name stops Aelix at startup).
 
     No prompt is submitted, so no model request is made."""
-    with tempfile.TemporaryDirectory(prefix="aelix-mattermost-doctor-") as directory:
-        work = Path(directory).resolve()
-        context = work / "request-context.json"
-        write_context(context, {"server": config.url, "post_id": "doctor", "channel_id": "doctor",
-                                "user_id": "doctor", "root_id": "doctor"})
-        rpc = RpcProcess(config, work, work, context)
-        try:
-            try:
-                state = await rpc.start()
-            except RpcError as exc:
-                raise RpcError(f"Aelix did not start: {exc}{_stderr_hint(config, rpc)}") from exc
-            model = resolved_model(state)
-        finally:
-            await rpc.close()
+    models: set[str] = set()
+    vision = False
+    reports = []
+    for tools, channels in tool_sets(config).items():
+        where = _where(config, tools, channels)
+        with tempfile.TemporaryDirectory(prefix="aelix-mattermost-doctor-") as directory:
+            state = await _start_child(config, Path(directory).resolve(), tools, where)
+        models.add(resolved_model(state))
+        model = state.get("model")
+        vision = isinstance(model, dict) and isinstance(model.get("input"), list) and "image" in model["input"]
+        label = f"enabled ({', '.join(tools)}); tool policy acknowledged" if tools else "disabled (--no-tools)"
+        reports.append(f"Aelix tools{where}: {label}")
     print(f"Aelix agent dir: {_agent_dir()}")
-    print(f"Aelix model: {_shown(model)}")
-    if config.allowed_tools:
-        print(f"Aelix tools: enabled ({', '.join(config.allowed_tools)}); tool policy acknowledged")
-    else:
-        print("Aelix tools: disabled (--no-tools)")
+    print(f"Aelix model: {', '.join(_shown(x) for x in sorted(models))}")
+    print("Aelix images: " + ("passed to the model" if vision else
+                              "saved for tools only (the model reads text only)"))
+    for line in reports:
+        print(line)
+    if config.extensions:
+        print(f"Aelix extensions: {', '.join(_shown(x, 120) for x in config.extensions)}")
     if config.mcp_config is not None:
         print(f"Aelix MCP servers: from {config.mcp_config}")
     else:
@@ -141,7 +183,16 @@ async def doctor(config: Config, check_aelix: bool) -> None:
         match = _VERSION.match(version) if isinstance(version, str) else None
         server = match[0] if match else "of unknown version"
         print(f"Mattermost WebSocket: authenticated (hello from server {server})")
-    print(f"Session scope: {config.session_scope}; allowed tools: {len(config.allowed_tools)}")
+    print(f"Session scope: {config.session_scope}; while running, new messages: {config.busy_mode}; "
+          f"progress: {config.progress}")
+    access = "pairing on" if config.pairing else "pairing off"
+    print(f"Access: {len(config.allowed_users)} allowed user(s), {len(config.admins)} admin(s), {access}"
+          + ("; allow_all_users" if config.allow_all_users else ""))
+    if config.channels:
+        print(f"Channel settings: {len(config.channels)} channel(s)")
+    if config.slash_listen:
+        print(f"Slash command: /{config.slash_trigger} on {config.slash_listen} "
+              "(Mattermost must reach it; see docs/slash-command.md)")
     if check_aelix:
         await aelix_check(config)
 
@@ -219,6 +270,9 @@ async def serve(config: Config) -> None:
                         handlers.append(sig)
                     except NotImplementedError:
                         pass
+                slash = SlashServer(gateway) if config.slash_listen else None
+                if slash is not None:
+                    await slash.start()
                 run = asyncio.create_task(gateway.run())
                 stop = asyncio.create_task(stopped.wait())
                 try:
@@ -230,6 +284,8 @@ async def serve(config: Config) -> None:
                     run.cancel()
                     stop.cancel()
                     await asyncio.gather(run, stop, return_exceptions=True)
+                    if slash is not None:
+                        await slash.close()
                     await gateway.close()
                     for sig in handlers:
                         loop.remove_signal_handler(sig)
@@ -247,6 +303,62 @@ def _seconds(value: str) -> float:
     return seconds
 
 
+async def pairing_command(config: Config, action: str, value: str | None) -> str:
+    """Manage pairing in the gateway's database (safe while the gateway runs)."""
+    store = Store(config.state_dir, config.dedup_days, owner=False)
+    try:
+        if action == "list":
+            lines = ["Pending pairing requests:"]
+            lines += [f"  {pairing.shown(code)}  user {user}  expires in {max(0, int((expires - time.time()) // 60))} min"
+                      for code, user, _, expires in store.pending_pairings()] or ["  (none)"]
+            lines.append("Users approved through pairing:")
+            lines += [f"  {user}  approved {time.strftime('%Y-%m-%d %H:%M', time.localtime(at))} by {by}"
+                      for user, at, by in store.paired_users()] or ["  (none)"]
+            return "\n".join(lines)
+        if not value:
+            raise ConfigError(f"pairing {action} needs a value")
+        if action == "revoke":
+            if not store.unpair(value):
+                raise ConfigError("That user was not approved through pairing")
+            return f"Revoked {value}"
+        taken = store.take_pairing(pairing.normalize(value))
+        if taken is None:
+            raise ConfigError("No pending pairing request has that code (expired or already handled)")
+        user, channel = taken
+        if action == "deny":
+            store.block_pairing(user, pairing.DENY_BLOCK)
+            return f"Denied the request of {user}; no new code for {int(pairing.DENY_BLOCK // 3600)} hours"
+        store.pair(user, "cli")
+    finally:
+        store.close()
+    try:
+        async with MattermostClient(config) as client:
+            await client.post(channel, "", pairing.APPROVED)
+        told = "; they were told in their DM"
+    except (MattermostError, OSError) as exc:
+        told = f"; could not tell them ({type(exc).__name__})"
+    return f"Approved {user}{told}"
+
+
+def tools_report(config: Config) -> str:
+    from importlib.metadata import entry_points
+
+    lines = ["Built-in Aelix tools (names for aelix.allowed_tools):"]
+    lines += [f"  {name:<6} {summary}" for name, summary in BUILTIN_TOOLS.items()]
+    found = sorted(entry_points(group="aelix.extensions"), key=lambda x: x.name)
+    found = [x for x in found if not x.value.startswith("aelix_mattermost.")]
+    lines.append("Installed Aelix extension packages in this Python (add the module to aelix.extensions;")
+    lines.append("their tool names then go into allowed_tools):")
+    lines += [f"  {x.name}: {x.value}" for x in found] or ["  (none)"]
+    lines.append("Configured:")
+    for tools, channels in tool_sets(config).items():
+        where = _where(config, tools, channels).strip() or "DMs and other channels"
+        lines.append(f"  {where}: {', '.join(tools) if tools else 'no tools'}")
+    lines.append(f"  extensions: {', '.join(config.extensions) if config.extensions else 'none'}")
+    lines.append("Run `aelix-mattermost doctor --check-aelix` to check that Aelix knows every tool name.")
+    return "\n".join(lines)
+
+
 COMMANDS = {
     "run": "serve Mattermost until SIGINT or SIGTERM",
     "doctor": "check the token, bot account and WebSocket (and Aelix with --check-aelix); "
@@ -254,6 +366,8 @@ COMMANDS = {
     "check-config": "validate the configuration without any network connection",
     "healthcheck": "exit 0 when the gateway's health.json is fresh and its WebSocket is connected "
                    "(no network access)",
+    "pairing": "list, approve, deny or revoke pairing requests (works while the gateway runs)",
+    "tools": "list the tool names and installed extension packages you can allow",
 }
 
 
@@ -270,6 +384,9 @@ def main(argv: list[str] | None = None) -> None:
         elif name == "healthcheck":
             command.add_argument("--max-age", type=_seconds, default=HEALTH_MAX_AGE, metavar="SECONDS",
                                  help=f"oldest acceptable health.json (default {HEALTH_MAX_AGE:g})")
+        elif name == "pairing":
+            command.add_argument("pairing_action", choices=("list", "approve", "deny", "revoke"))
+            command.add_argument("value", nargs="?", help="a pairing code, or a user id for revoke")
     args = parser.parse_args(argv)
     if args.action == "healthcheck":
         # Reads gateway.state_dir and health.json only: no token, no writes, no network.
@@ -287,6 +404,10 @@ def main(argv: list[str] | None = None) -> None:
             print("Configuration is valid; no network connection was made.")
         elif args.action == "doctor":
             asyncio.run(doctor(config, args.check_aelix))
+        elif args.action == "pairing":
+            print(asyncio.run(pairing_command(config, args.pairing_action, args.value)))
+        elif args.action == "tools":
+            print(tools_report(config))
         else:
             asyncio.run(serve(config))
     except KeyboardInterrupt:

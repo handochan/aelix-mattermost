@@ -8,7 +8,7 @@ def setup(aelix: Any) -> None:
         return (
             "Mattermost gateway: run `aelix-mattermost doctor --config config.toml`, "
             "then `aelix-mattermost run --config config.toml` in a separate service. "
-            "In Mattermost use @aelix, !help, !cancel or !reset."
+            "In Mattermost use @aelix, then !help, !status, !stop, !new or /aelix (if registered)."
         )
 
     aelix.register_command(

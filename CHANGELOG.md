@@ -3,6 +3,54 @@
 All notable changes to aelix-mattermost are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-10-09
+
+### Added
+
+- Commands `!status`, `!stop`, `!new`, `!steer`, `!queue`, `!model`, `!usage`, `!compact` and
+  `!tools` (`!cancel` and `!reset` stay as aliases). Commands also work as ` /name` with a
+  leading space or `@bot /name`, and through an optional custom slash command endpoint
+  (`[slash_command]`, [docs/slash-command.md](docs/slash-command.md)) that answers ephemerally.
+- `gateway.busy_mode`: a message from the person whose request is running is injected into it
+  through Aelix's steer queue (`steer`, the default), stops it (`interrupt`), or waits
+  (`queue`). Answers that Aelix finished before a steered message took effect are posted to
+  their own request's thread, and a steered message that Aelix queued after its loop ended is
+  run as a request of its own.
+- `!stop` and interruption abort the run over RPC and keep the Aelix child (a cancel that
+  restarts it is the fallback).
+- Progress: the preparing post shows the phase, the running tool, the number of tool calls and
+  the elapsed time (`progress = "status"`), optionally the answer so far (`"stream"`), and the
+  typing indicator runs.
+- Thread history: channel-thread posts that the conversation has not seen are quoted into the
+  prompt as untrusted context (`thread_history_posts`, `thread_history_chars`).
+- Attachments: text inlined, images passed to models with image input, every file saved under
+  the conversation's `attachments/`; files the model writes into `outbox/` are attached to its
+  answer (`max_attachments`, `max_attachment_bytes`, `max_inline_text_chars`, `max_upload_bytes`).
+- A built-in Mattermost system prompt passed with `--append-system-prompt-file`, followed by
+  `aelix.system_prompt` and per-channel prompts.
+- `[channels."<id>"]`: per-channel `prompt`, `require_mention` (mention-free channels) and
+  `allowed_tools`.
+- `aelix.models` and `!model`: per-conversation model choice, applied by restarting the child
+  with `--model` on the transcript.
+- Pairing (`pairing`, `admins`): unknown users DM the bot for a code; admins approve with
+  `!pair` in a DM or `aelix-mattermost pairing`.
+- `aelix-mattermost tools` lists built-in tool names and installed extension packages;
+  `doctor --check-aelix` starts Aelix with every configured tool list and reports whether the
+  model reads images.
+- `aelix.extensions` accepts installed extension modules (`"pkg"`, `"pkg.module:setup"`),
+  loaded through a generated file in the state directory so that a tool can never plant a
+  same-named directory in the working directory; the Docker image takes
+  `--build-arg EXTENSION_PACKAGES=...`.
+
+### Changed
+
+- Posts are processed in tasks, in arrival order within a conversation; a slow command or
+  download no longer holds up other conversations.
+- The state database moves to schema 2 (conversation model choice, thread position, pairing).
+  0.2.0 refuses to start on it: back up the state directory before upgrading.
+- In shared threads (`session_scope = "thread"`), messages that carry context blocks name
+  their sender.
+
 ## [0.2.0] - 2026-10-08
 
 ### Security
